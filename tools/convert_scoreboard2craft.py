@@ -4,41 +4,6 @@ from tqdm import tqdm
 from PIL import Image
 
 
-class CRAFTSBDataset:
-    def __init__(self, images_dir) -> None:
-        self.images_dir = images_dir
-        self.annotations_dir = images_dir.replace(
-            "images", "localization_transcription_gt"
-        )
-
-        self.list_images = list(Path(self.images_dir).glob("*.jpg"))
-
-    def __getitem__(self, index):
-        image = Image.open(self.list_images[index])
-        annotation = self._get_annotation(index)
-
-        return image, annotation
-
-    def __len__(self):
-        return len(self.list_images)
-
-    def _get_annotation(self, index):
-        image_name = self.list_images[index].name
-        annotation_path = Path(self.annotations_dir) / image_name.replace(
-            ".jpg", ".txt"
-        )
-
-        with open(annotation_path, "r") as f:
-            lines = f.readlines()
-
-        annotation = []
-        for line in lines:
-            line = line.strip().split(",")
-            annotation.append(line)
-
-        return annotation
-
-
 def get_scoreboard(sample):
     frame = sample["image"]
     sb_bbox = sample["boxes"]["xyx2y2_abs"][
@@ -114,17 +79,22 @@ def scoreboard2craft(dataset, images_out_dir="/data/sb_craft_images"):
         annotations_craft = convert_annotations(annotations)
         write_annotation_file(
             annotations_craft,
-            str(out_annotations_dir / image_name.replace(".jpg", ".txt")),
+            str(out_annotations_dir / f"gt_{image_name.replace('.jpg', '.txt')}"),
         )
 
-        if i > 5:  # TODO: remove!
+        if i >= 5:  # TODO: remove!
             break
 
 
 if __name__ == "__main__":
     train_dataset = ScoreboardDataset.load_dataset(split="train")
     scoreboard2craft(
-        train_dataset, images_out_dir="/data/sb_craft_dataset/training_images"
+        train_dataset, images_out_dir="/data/sb_craft_dataset/ch4_training_images"
+    )
+
+    test_dataset = ScoreboardDataset.load_dataset(split="test")
+    scoreboard2craft(
+        train_dataset, images_out_dir="/data/sb_craft_dataset/ch4_test_images"
     )
 
     print("end")

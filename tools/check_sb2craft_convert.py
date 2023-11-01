@@ -25,8 +25,8 @@ class CRAFTSBDataset:
 
     def _get_annotation(self, index):
         image_name = self.list_images[index].name
-        annotation_path = Path(self.annotations_dir) / image_name.replace(
-            ".jpg", ".txt"
+        annotation_path = (
+            Path(self.annotations_dir) / f"gt_{image_name.replace('.jpg', '.txt')}"
         )
 
         with open(annotation_path, "r") as f:
@@ -47,7 +47,7 @@ def func_draw_boxes(image, box, width=2, color=(0, 255, 0)):
 
 
 if __name__ == "__main__":
-    dataset = CRAFTSBDataset(images_dir="/data/sb_craft_dataset/training_images")
+    dataset = CRAFTSBDataset(images_dir="/data/sb_craft_dataset/ch4_training_images")
 
     for i, sample in enumerate(dataset):
         image_path, sb, annotations = sample
@@ -61,9 +61,9 @@ if __name__ == "__main__":
             sb_with_box = func_draw_boxes(sb, (xtl, ytl, xbr, ybr))
 
         # uncomment the line below to save the images with bboxes
-        # sb_with_box.save(f"sb{i}.jpg")
+        sb_with_box.save(f"sb{i}.jpg")
 
-        if i > 5:
+        if i >= 5:
             break
 
     print("Done!")
