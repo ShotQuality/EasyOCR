@@ -10,26 +10,31 @@ import importlib
 from .utils import CTCLabelConverter
 import math
 
+
 def custom_mean(x):
-    return x.prod()**(2.0/np.sqrt(len(x)))
+    return x.prod() ** (2.0 / np.sqrt(len(x)))
+
 
 def contrast_grey(img):
     high = np.percentile(img, 90)
-    low  = np.percentile(img, 10)
-    return (high-low)/np.maximum(10, high+low), high, low
+    low = np.percentile(img, 10)
+    return (high - low) / np.maximum(10, high + low), high, low
 
-def adjust_contrast_grey(img, target = 0.4):
+
+def adjust_contrast_grey(img, target=0.4):
     contrast, high, low = contrast_grey(img)
     if contrast < target:
         img = img.astype(int)
-        ratio = 200./np.maximum(10, high-low)
-        img = (img - low + 25)*ratio
-        img = np.maximum(np.full(img.shape, 0) ,np.minimum(np.full(img.shape, 255), img)).astype(np.uint8)
+        ratio = 200.0 / np.maximum(10, high - low)
+        img = (img - low + 25) * ratio
+        img = np.maximum(
+            np.full(img.shape, 0), np.minimum(np.full(img.shape, 255), img)
+        ).astype(np.uint8)
     return img
 
-class NormalizePAD(object):
 
-    def __init__(self, max_size, PAD_type='right'):
+class NormalizePAD(object):
+    def __init__(self, max_size, PAD_type="right"):
         self.toTensor = transforms.ToTensor()
         self.max_size = max_size
         self.max_width_half = math.floor(max_size[2] / 2)
@@ -42,12 +47,14 @@ class NormalizePAD(object):
         Pad_img = torch.FloatTensor(*self.max_size).fill_(0)
         Pad_img[:, :, :w] = img  # right pad
         if self.max_size[2] != w:  # add border Pad
-            Pad_img[:, :, w:] = img[:, :, w - 1].unsqueeze(2).expand(c, h, self.max_size[2] - w)
+            Pad_img[:, :, w:] = (
+                img[:, :, w - 1].unsqueeze(2).expand(c, h, self.max_size[2] - w)
+            )
 
         return Pad_img
 
-class ListDataset(torch.utils.data.Dataset):
 
+class ListDataset(torch.utils.data.Dataset):
     def __init__(self, image_list):
         self.image_list = image_list
         self.nSamples = len(image_list)
@@ -57,11 +64,33 @@ class ListDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         img = self.image_list[index]
-        return Image.fromarray(img, 'L')
+
+        # wlp: added the code
+        # Handle a PyTorch tensor
+        if isinstance(img, torch.Tensor):
+            # Move tensor to CPU if it's on GPU
+            img = img.cpu() if img.is_cuda else img
+
+            # For RGB images in CxHxW format
+            if img.ndim == 3 and img.shape[0] == 3:
+                img = img.permute(1, 2, 0).numpy()
+            else:  # For grayscale images
+                img = img.numpy()
+
+        # Convert to PIL Image
+        # Adjust mode ('L' for grayscale, 'RGB' for color images)
+        mode = "L" if img.ndim == 2 else "RGB"
+        return Image.fromarray(img, mode)
+
+        # wlp: end
+        #
+        # return Image.fromarray(img, 'L')
+
 
 class AlignCollate(object):
-
-    def __init__(self, imgH=32, imgW=100, keep_ratio_with_pad=False, adjust_contrast = 0.):
+    def __init__(
+        self, imgH=32, imgW=100, keep_ratio_with_pad=False, adjust_contrast=0.0
+    ):
         self.imgH = imgH
         self.imgW = imgW
         self.keep_ratio_with_pad = keep_ratio_with_pad
@@ -81,8 +110,8 @@ class AlignCollate(object):
             #### augmentation here - change contrast
             if self.adjust_contrast > 0:
                 image = np.array(image.convert("L"))
-                image = adjust_contrast_grey(image, target = self.adjust_contrast)
-                image = Image.fromarray(image, 'L')
+                image = adjust_contrast_grey(image, target=self.adjust_contrast)
+                image = Image.fromarray(image, "L")
 
             ratio = w / float(h)
             if math.ceil(self.imgH * ratio) > self.imgW:
@@ -96,17 +125,27 @@ class AlignCollate(object):
         image_tensors = torch.cat([t.unsqueeze(0) for t in resized_images], 0)
         return image_tensors
 
-def recognizer_predict(model, converter, test_loader, batch_max_length,\
-                       ignore_idx, char_group_idx, decoder = 'greedy', beamWidth= 5, device = 'cpu'):
+
+def recognizer_predict(
+    model,
+    converter,
+    test_loader,
+    batch_max_length,
+    ignore_idx,
+    char_group_idx,
+    decoder="greedy",
+    beamWidth=5,
+    device="cpu",
+):
     model.eval()
     result = []
     with torch.no_grad():
         for image_tensors in test_loader:
             batch_size = image_tensors.size(0)
-            image = image_tensors.to(device)
+            image = image_tensors
             # For max length prediction
-            length_for_pred = torch.IntTensor([batch_max_length] * batch_size).to(device)
-            text_for_pred = torch.LongTensor(batch_size, batch_max_length + 1).fill_(0).to(device)
+            length_for_pred = torch.IntTensor([batch_max_length] * batch_size)
+            text_for_pred = torch.LongTensor(batch_size, batch_max_length + 1).fill_(0)
 
             preds = model(image, text_for_pred)
 
@@ -115,57 +154,81 @@ def recognizer_predict(model, converter, test_loader, batch_max_length,\
 
             ######## filter ignore_char, rebalance
             preds_prob = F.softmax(preds, dim=2)
-            preds_prob = preds_prob.cpu().detach().numpy()
-            preds_prob[:,:,ignore_idx] = 0.
+            # preds_prob = preds_prob.cpu().detach().numpy()
+            preds_prob[:, :, ignore_idx] = 0.0
             pred_norm = preds_prob.sum(axis=2)
-            preds_prob = preds_prob/np.expand_dims(pred_norm, axis=-1)
-            preds_prob = torch.from_numpy(preds_prob).float().to(device)
+            # preds_prob = preds_prob/np.expand_dims(pred_norm, axis=-1)
+            preds_prob /= pred_norm.unsqueeze(dim=-1)  # wlp: added
+            # preds_prob = torch.from_numpy(preds_prob).float()
+            preds_prob = preds_prob.float()  # wlp: added
 
-            if decoder == 'greedy':
+            if decoder == "greedy":
                 # Select max probabilty (greedy decoding) then decode index to character
                 _, preds_index = preds_prob.max(2)
                 preds_index = preds_index.view(-1)
-                preds_str = converter.decode_greedy(preds_index.data.cpu().detach().numpy(), preds_size.data)
-            elif decoder == 'beamsearch':
+                # preds_str = converter.decode_greedy(preds_index.data.cpu().detach().numpy(), preds_size.data)
+                preds_str = converter.decode_greedy(preds_index.data, preds_size.data)
+            elif decoder == "beamsearch":
                 k = preds_prob.cpu().detach().numpy()
                 preds_str = converter.decode_beamsearch(k, beamWidth=beamWidth)
-            elif decoder == 'wordbeamsearch':
+            elif decoder == "wordbeamsearch":
                 k = preds_prob.cpu().detach().numpy()
                 preds_str = converter.decode_wordbeamsearch(k, beamWidth=beamWidth)
 
-            preds_prob = preds_prob.cpu().detach().numpy()
-            values = preds_prob.max(axis=2)
-            indices = preds_prob.argmax(axis=2)
-            preds_max_prob = []
-            for v,i in zip(values, indices):
-                max_probs = v[i!=0]
-                if len(max_probs)>0:
-                    preds_max_prob.append(max_probs)
-                else:
-                    preds_max_prob.append(np.array([0]))
+            # preds_prob = preds_prob.cpu().detach().numpy()
+            # values = preds_prob.max(axis=2)
+            # indices = preds_prob.argmax(axis=2)
+            values, indices = torch.max(preds_prob, dim=2)
 
-            for pred, pred_max_prob in zip(preds_str, preds_max_prob):
-                confidence_score = custom_mean(pred_max_prob)
+            # preds_max_prob = []
+            # for v,i in zip(values, indices):
+            #     max_probs = v[i!=0]
+            #     if len(max_probs)>0:
+            #         preds_max_prob.append(max_probs)
+            #     else:
+            #         preds_max_prob.append(np.array([0]))
+
+            # for pred, pred_max_prob in zip(preds_str, preds_max_prob):
+            #     confidence_score = custom_mean(pred_max_prob)
+            #     result.append([pred, confidence_score])
+
+            result = []
+            for v, i, pred in zip(values, indices, preds_str):
+                max_probs = v[i != 0]
+
+                if len(max_probs) > 0:
+                    preds_max_prob = max_probs.tolist()
+                else:
+                    preds_max_prob = [0]
+
+                confidence_score = torch.mean(torch.tensor(preds_max_prob).float())
                 result.append([pred, confidence_score])
 
     return result
 
-def get_recognizer(recog_network, network_params, character,\
-                   separator_list, dict_list, model_path,\
-                   device = 'cpu', quantize = True):
 
+def get_recognizer(
+    recog_network,
+    network_params,
+    character,
+    separator_list,
+    dict_list,
+    model_path,
+    device="cpu",
+    quantize=True,
+):
     converter = CTCLabelConverter(character, separator_list, dict_list)
     num_class = len(converter.character)
 
-    if recog_network == 'generation1':
+    if recog_network == "generation1":
         model_pkg = importlib.import_module("easyocr.model.model")
-    elif recog_network == 'generation2':
+    elif recog_network == "generation2":
         model_pkg = importlib.import_module("easyocr.model.vgg_model")
     else:
         model_pkg = importlib.import_module(recog_network)
     model = model_pkg.Model(num_class=num_class, **network_params)
 
-    if device == 'cpu':
+    if device == "cpu":
         state_dict = torch.load(model_path, map_location=device)
         new_state_dict = OrderedDict()
         for key, value in state_dict.items():
@@ -174,60 +237,120 @@ def get_recognizer(recog_network, network_params, character,\
         model.load_state_dict(new_state_dict)
         if quantize:
             try:
-                torch.quantization.quantize_dynamic(model, dtype=torch.qint8, inplace=True)
+                torch.quantization.quantize_dynamic(
+                    model, dtype=torch.qint8, inplace=True
+                )
             except:
                 pass
     else:
-        model = torch.nn.DataParallel(model).to(device)
-        model.load_state_dict(torch.load(model_path, map_location=device))
+        # model = torch.nn.DataParallel(model)
+        # model.load_state_dict(torch.load(model_path, map_location=device))
+        mapping_dict = torch.load(model_path, map_location="cpu")
+        new_mapping_dict = {}
+        for k, v in mapping_dict.items():
+            new_key = k.replace("module.", "")  # tiramos o module do mapeamento
+            new_mapping_dict[new_key] = v
+        model.load_state_dict(new_mapping_dict)
 
     return model, converter
 
-def get_text(character, imgH, imgW, recognizer, converter, image_list,\
-             ignore_char = '',decoder = 'greedy', beamWidth =5, batch_size=1, contrast_ths=0.1,\
-             adjust_contrast=0.5, filter_ths = 0.003, workers = 1, device = 'cpu'):
-    batch_max_length = int(imgW/10)
+
+def get_text(
+    character,
+    imgH,
+    imgW,
+    recognizer,
+    converter,
+    image_list,
+    ignore_char="",
+    decoder="greedy",
+    beamWidth=5,
+    batch_size=1,
+    contrast_ths=0.1,
+    adjust_contrast=0.5,
+    filter_ths=0.003,
+    workers=1,
+    device="cpu",
+):
+    batch_max_length = int(imgW / 10)
 
     char_group_idx = {}
     ignore_idx = []
     for char in ignore_char:
-        try: ignore_idx.append(character.index(char)+1)
-        except: pass
+        try:
+            ignore_idx.append(character.index(char) + 1)
+        except:
+            pass
 
     coord = [item[0] for item in image_list]
     img_list = [item[1] for item in image_list]
     AlignCollate_normal = AlignCollate(imgH=imgH, imgW=imgW, keep_ratio_with_pad=True)
     test_data = ListDataset(img_list)
     test_loader = torch.utils.data.DataLoader(
-        test_data, batch_size=batch_size, shuffle=False,
-        num_workers=int(workers), collate_fn=AlignCollate_normal, pin_memory=True)
+        test_data,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=int(workers),
+        collate_fn=AlignCollate_normal,
+        pin_memory=True,
+    )
 
     # predict first round
-    result1 = recognizer_predict(recognizer, converter, test_loader,batch_max_length,\
-                                 ignore_idx, char_group_idx, decoder, beamWidth, device = device)
+    result1 = recognizer_predict(
+        recognizer,
+        converter,
+        test_loader,
+        batch_max_length,
+        ignore_idx,
+        char_group_idx,
+        decoder,
+        beamWidth,
+        device=device,
+    )
 
     # predict second round
-    low_confident_idx = [i for i,item in enumerate(result1) if (item[1] < contrast_ths)]
+    low_confident_idx = [
+        i for i, item in enumerate(result1) if (item[1] < contrast_ths)
+    ]
     if len(low_confident_idx) > 0:
         img_list2 = [img_list[i] for i in low_confident_idx]
-        AlignCollate_contrast = AlignCollate(imgH=imgH, imgW=imgW, keep_ratio_with_pad=True, adjust_contrast=adjust_contrast)
+        AlignCollate_contrast = AlignCollate(
+            imgH=imgH,
+            imgW=imgW,
+            keep_ratio_with_pad=True,
+            adjust_contrast=adjust_contrast,
+        )
         test_data = ListDataset(img_list2)
         test_loader = torch.utils.data.DataLoader(
-                        test_data, batch_size=batch_size, shuffle=False,
-                        num_workers=int(workers), collate_fn=AlignCollate_contrast, pin_memory=True)
-        result2 = recognizer_predict(recognizer, converter, test_loader, batch_max_length,\
-                                     ignore_idx, char_group_idx, decoder, beamWidth, device = device)
+            test_data,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=int(workers),
+            collate_fn=AlignCollate_contrast,
+            pin_memory=True,
+        )
+        result2 = recognizer_predict(
+            recognizer,
+            converter,
+            test_loader,
+            batch_max_length,
+            ignore_idx,
+            char_group_idx,
+            decoder,
+            beamWidth,
+            device=device,
+        )
 
     result = []
     for i, zipped in enumerate(zip(coord, result1)):
         box, pred1 = zipped
         if i in low_confident_idx:
             pred2 = result2[low_confident_idx.index(i)]
-            if pred1[1]>pred2[1]:
-                result.append( (box, pred1[0], pred1[1]) )
+            if pred1[1] > pred2[1]:
+                result.append((box, pred1[0], pred1[1]))
             else:
-                result.append( (box, pred2[0], pred2[1]) )
+                result.append((box, pred2[0], pred2[1]))
         else:
-            result.append( (box, pred1[0], pred1[1]) )
+            result.append((box, pred1[0], pred1[1]))
 
     return result
