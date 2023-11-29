@@ -369,14 +369,20 @@ class CTCLabelConverter(object):
         for l in length:
             t = text_index[index : index + l]
             # Returns a boolean array where true is when the value is not repeated
-            a = np.insert(~((t[1:] == t[:-1])), 0, True)
+            # a = np.insert(~((t[1:] == t[:-1])), 0, True)
+            negated = ~(t[1:] == t[:-1])
+            a = torch.cat((torch.tensor([True], device=t.device), negated))
             # Returns a boolean array where true is when the value is not in the ignore_idx list
-            b = ~np.isin(t, np.array(self.ignore_idx))
+            # b = ~np.isin(t, np.array(self.ignore_idx))
+            ignore_idx = torch.tensor(self.ignore_idx, device=t.device)
+            b = ~torch.tensor([item in ignore_idx for item in t], device=t.device)
             # Combine the two boolean array
             c = a & b
             # Gets the corresponding character according to the saved indexes
             # text = ''.join(np.array(self.character)[t[c.nonzero()]])
-            text = "".join(np.array(self.character)[t[c.nonzero()].flatten()])
+            text = "".join(
+                np.array(self.character)[t[c.nonzero()].flatten().cpu().numpy()]
+            )
             texts.append(text)
             index += l
         return texts
