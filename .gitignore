@@ -107,3 +107,8 @@ ENV/
 .vscode/
 .vs/
 .idea/
+
+all_data
+saved_models
+*.pth
+*.zip
